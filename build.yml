@@ -1,0 +1,66 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # اگر پروژه را به صورت فایل zip آپلود کردی، خودکار باز می‌شود
+      - name: Unzip project if needed
+        run: |
+          if [ ! -d www ]; then
+            for z in *.zip; do unzip -o "$z"; done
+          fi
+
+      # فایل‌هایی که کنار زیپ در ریشه‌ی ریپو آپلود کنی جایگزین نسخه‌ی داخل زیپ می‌شوند
+      - name: Apply root overrides (config, icon, splash)
+        run: |
+          mkdir -p assets
+          if [ -f config.js ]; then cp config.js www/config.js; fi
+          for f in icon-only.png icon-foreground.png icon-background.png splash.png splash-dark.png; do
+            if [ -f "$f" ]; then cp "$f" assets/"$f"; fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install
+        run: npm install
+
+      - name: Copy PDF reader library
+        run: |
+          mkdir -p www/lib
+          if [ -d node_modules/pdfjs-dist ]; then
+            cp node_modules/pdfjs-dist/build/pdf.min.js www/lib/pdf.min.js
+            cp node_modules/pdfjs-dist/build/pdf.worker.min.js www/lib/pdf.worker.min.js
+          fi
+
+      - name: Add Android
+        run: |
+          npx cap add android
+          if [ -d assets ]; then npx capacitor-assets generate --android; fi
+          npx cap sync android
+          sed -i 's#<application#<uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <application#' android/app/src/main/AndroidManifest.xml
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
